@@ -399,8 +399,8 @@ class KubricMovifDataset(CoTrackerDataset):
 
         self.seq_names = [
             fname
-            for fname in os.listdir(data_root)
-            if os.path.isdir(os.path.join(data_root, fname))
+            for fname in os.listdir(os.path.join(data_root, self.split))
+            if os.path.isdir(os.path.join(data_root, self.split, fname))
         ]
         if self.split == "valid":
             self.seq_names = self.seq_names[:30]
@@ -411,8 +411,8 @@ class KubricMovifDataset(CoTrackerDataset):
     def getitem_helper(self, index):
         gotit = True
         seq_name = self.seq_names[index]
-        npy_path = os.path.join(self.data_root, seq_name, seq_name + ".npy")
-        rgb_path = os.path.join(self.data_root, seq_name, "frames")
+        npy_path = os.path.join(self.data_root, self.split, seq_name, seq_name + ".npy")
+        rgb_path = os.path.join(self.data_root, self.split, seq_name, "frames")
 
         img_paths = sorted(os.listdir(rgb_path))
         rgbs = []

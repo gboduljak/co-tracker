@@ -398,6 +398,45 @@ class Attention(nn.Module):
         return self.to_out(x)
 
 
+class FlashAttention(nn.Module):
+    def __init__(
+        self,
+        query_dim,
+        context_dim=None,
+        num_heads=8,
+        dim_head=48,
+        qkv_bias=False
+    ):
+        super().__init__()
+        inner_dim = dim_head * num_heads
+        context_dim = default(context_dim, query_dim)
+        self.scale = dim_head**-0.5
+        self.heads = num_heads
+
+        self.to_q = nn.Linear(query_dim, inner_dim, bias=qkv_bias)
+        self.to_kv = nn.Linear(
+            context_dim,  # type: ignore
+            inner_dim * 2,
+            bias=qkv_bias
+        )
+        self.to_out = nn.Linear(inner_dim, query_dim)
+
+    def forward(self, x, context=None, attn_bias=None):
+        B, N1, C = x.shape
+        h = self.heads
+
+        q = self.to_q(x).reshape(B, N1, h, C // h).permute(0, 2, 1, 3)
+        context = default(context, x)
+        k, v = self.to_kv(context).chunk(2, dim=-1)
+
+        N2 = context.shape[1]  # type: ignore
+        k = k.reshape(B, N2, h, C // h).permute(0, 2, 1, 3)
+        v = v.reshape(B, N2, h, C // h).permute(0, 2, 1, 3)
+
+        x = F.scaled_dot_product_attention(q, k, v, scale=self.scale, attn_mask=attn_bias)
+        x = x.transpose(1, 2).reshape(B, N1, C)
+        return self.to_out(x)
+    
 class AttnBlock(nn.Module):
     def __init__(
         self,

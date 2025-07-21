@@ -24,6 +24,7 @@ from pytorch_lightning.lite import LightningLite
 
 from cotracker.models.core.cotracker.cotracker3_offline import CoTrackerThreeOffline
 from cotracker.models.core.cotracker.cotracker3_online import CoTrackerThreeOnline
+from cotracker.models.core.cotracker.cotracker3_online_vjepa import CoTrackerThreeOnline as CoTrackerThreeOnlineVJEPA
 
 from cotracker.utils.visualizer import Visualizer
 from cotracker.models.core.model_utils import get_uniformly_sampled_pts
@@ -256,20 +257,22 @@ class Lite(LightningLite):
             if not args.debug:
                 final_dataloaders = [dl for dl in eval_dataloaders]
 
-                ds_name = "dynamic_replica"
-                final_dataloaders.append(
-                    (ds_name, get_eval_dataloader(args.dataset_root, ds_name))
-                )
+                # Do not eval too much during training ...
 
-                ds_name = "tapvid_robotap"
-                final_dataloaders.append(
-                    (ds_name, get_eval_dataloader(args.dataset_root, ds_name))
-                )
+                # ds_name = "dynamic_replica"
+                # final_dataloaders.append(
+                #     (ds_name, get_eval_dataloader(args.dataset_root, ds_name))
+                # )
 
-                ds_name = "tapvid_kinetics_first"
-                final_dataloaders.append(
-                    (ds_name, get_eval_dataloader(args.dataset_root, ds_name))
-                )
+                # ds_name = "tapvid_robotap"
+                # final_dataloaders.append(
+                #     (ds_name, get_eval_dataloader(args.dataset_root, ds_name))
+                # )
+
+                # ds_name = "tapvid_kinetics_first"
+                # final_dataloaders.append(
+                #     (ds_name, get_eval_dataloader(args.dataset_root, ds_name))
+                # )
 
             evaluator = Evaluator(args.ckpt_path)
 
@@ -301,7 +304,19 @@ class Lite(LightningLite):
                     num_virtual_tracks=args.num_virtual_tracks,
                     model_resolution=args.crop_size,
                     linear_layer_for_vis_conf=args.linear_layer_for_vis_conf,
+                    flash_attention=args.flash_attention
                 )
+        elif args.model_name == "cotracker_three_vjepa":
+            model = CoTrackerThreeOnlineVJEPA(
+                stride=args.model_stride,
+                corr_radius=args.corr_radius,
+                corr_levels=args.corr_levels,
+                window_len=args.sliding_window_len,
+                num_virtual_tracks=args.num_virtual_tracks,
+                model_resolution=args.crop_size,
+                linear_layer_for_vis_conf=args.linear_layer_for_vis_conf,
+                flash_attention=True
+            )
         else:
             raise ValueError(f"Model {args.model_name} doesn't exist")
 
@@ -340,9 +355,9 @@ class Lite(LightningLite):
             ckpt = self.load(os.path.join(args.ckpt_path, ckpt_path))
             logging.info(f"Loading checkpoint {ckpt_path}")
             if "model" in ckpt:
-                model.load_state_dict(ckpt["model"])
+                model.load_state_dict(ckpt["model"], strict=False)
             else:
-                model.load_state_dict(ckpt)
+                model.load_state_dict(ckpt, strict=False)
             if "optimizer" in ckpt:
                 logging.info("Load optimizer")
                 optimizer.load_state_dict(ckpt["optimizer"])
@@ -395,8 +410,6 @@ class Lite(LightningLite):
 
                 dataclass_to_cuda_(batch)
 
-                optimizer.zero_grad(set_to_none=True)
-
                 assert model.training
 
                 output = forward_batch(batch, model, args)
@@ -406,7 +419,7 @@ class Lite(LightningLite):
                     if "loss" in v:
                         loss += v["loss"]
 
-                if self.global_rank == 0:
+                if self.global_rank == 0 and total_steps % args.log_every_n_steps == args.log_every_n_steps - 1:
                     for k, v in output.items():
                         if "loss" in v:
                             logger.writer.add_scalar(
@@ -442,15 +455,20 @@ class Lite(LightningLite):
                     )
                     global_batch_num += 1
 
-                self.barrier()
+                 # Scale loss by accumulation steps
+                loss = loss / args.accumulation_steps
                 self.backward(scaler.scale(loss))
 
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                if total_steps % args.accumulation_steps == args.accumulation_steps - 1:
+                    self.barrier()
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                    scaler.step(optimizer)
+                    scheduler.step()
+                    scaler.update()
+                    optimizer.zero_grad(set_to_none=True)
 
-                scaler.step(optimizer)
-                scheduler.step()
-                scaler.update()
+
                 total_steps += 1
                 if self.global_rank == 0:
                     if (i_batch >= len(train_loader) - 1) or (
@@ -477,17 +495,17 @@ class Lite(LightningLite):
                         if (epoch + 1) % args.evaluate_every_n_epoch == 0 or (
                             args.validate_at_start and epoch == 0
                         ):
-                            run_test_eval(
-                                evaluator,
-                                model,
-                                eval_dataloaders,
-                                logger.writer,
-                                total_steps,
-                                query_random=(
-                                    args.query_sampling_method is not None
-                                    and "random" in args.query_sampling_method
-                                ),
-                            )
+                            # run_test_eval(
+                            #     evaluator,
+                            #     model,
+                            #     eval_dataloaders,
+                            #     logger.writer,
+                            #     total_steps,
+                            #     query_random=(
+                            #         args.query_sampling_method is not None
+                            #         and "random" in args.query_sampling_method
+                            #     ),
+                            # )
                             model.train()
                             torch.cuda.empty_cache()
 
@@ -501,17 +519,17 @@ class Lite(LightningLite):
 
             PATH = f"{args.ckpt_path}/{args.model_name}_final.pth"
             torch.save(model.module.module.state_dict(), PATH)
-            run_test_eval(
-                evaluator,
-                model,
-                final_dataloaders,
-                logger.writer,
-                total_steps,
-                query_random=(
-                    args.query_sampling_method is not None
-                    and "random" in args.query_sampling_method
-                ),
-            )
+            # run_test_eval(
+            #     evaluator,
+            #     model,
+            #     final_dataloaders,
+            #     logger.writer,
+            #     total_steps,
+            #     query_random=(
+            #         args.query_sampling_method is not None
+            #         and "random" in args.query_sampling_method
+            #     ),
+            # )
             logger.close()
 
 
@@ -524,6 +542,12 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt_path", help="path to save checkpoints")
     parser.add_argument(
         "--batch_size", type=int, default=4, help="batch size used during training."
+    )
+    parser.add_argument(
+        "--accumulation_steps",
+        type=int,
+        default=4,
+        help="gradient accumulation steps."
     )
     parser.add_argument("--num_nodes", type=int, default=1)
     parser.add_argument(
@@ -545,6 +569,12 @@ if __name__ == "__main__":
         type=int,
         default=1,
         help="evaluate during training after every n epochs, after every epoch by default",
+    )
+    parser.add_argument(
+        "--log_every_n_steps",
+        type=int,
+        default=100,
+        help="log losses only when total_steps is a multiple of this value",
     )
     parser.add_argument(
         "--save_every_n_epoch",
@@ -614,6 +644,11 @@ if __name__ == "__main__":
         "--offline_model",
         action="store_true",
         help="only sample trajectories with points visible on the first frame",
+    )
+    parser.add_argument(
+        "--flash_attention",
+        action="store_true",
+        help="",
     )
     parser.add_argument(
         "--sliding_window_len",

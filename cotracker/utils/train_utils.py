@@ -45,38 +45,38 @@ def get_eval_dataloader(dataset_root, ds_name):
             rgbd_input=False,
         )
     elif ds_name == "tapvid_davis_first":
-        data_root = os.path.join(dataset_root, "tapvid/tapvid_davis/tapvid_davis.pkl")
+        data_root = os.path.join(dataset_root, "TAP-Vid/tapvid_davis/tapvid_davis.pkl")
         eval_dataset = TapVidDataset(
             dataset_type="davis", data_root=data_root, queried_first=True
         )
     elif ds_name == "tapvid_davis_strided":
-        data_root = os.path.join(dataset_root, "tapvid/tapvid_davis/tapvid_davis.pkl")
+        data_root = os.path.join(dataset_root, "TAP-Vid/tapvid_davis/tapvid_davis.pkl")
         eval_dataset = TapVidDataset(
             dataset_type="davis", data_root=data_root, queried_first=False
         )
     elif ds_name == "tapvid_kinetics_first":
         eval_dataset = TapVidDataset(
             dataset_type="kinetics",
-            data_root=os.path.join(dataset_root, "tapvid", "tapvid_kinetics"),
+            data_root=os.path.join(dataset_root, "TAP-Vid", "tapvid_kinetics"),
         )
     elif ds_name == "tapvid_stacking":
         eval_dataset = TapVidDataset(
             dataset_type="stacking",
             data_root=os.path.join(
-                dataset_root, "tapvid", "tapvid_rgb_stacking", "tapvid_rgb_stacking.pkl"
+                dataset_root, "TAP-Vid", "tapvid_rgb_stacking", "tapvid_rgb_stacking.pkl"
             ),
         )
     elif ds_name == "tapvid_robotap":
         eval_dataset = TapVidDataset(
             dataset_type="robotap",
-            data_root=os.path.join(dataset_root, "tapvid", "tapvid_robotap"),
+            data_root=os.path.join(dataset_root, "TAP-Vid", "tapvid_robotap"),
         )
     elif ds_name == "kubric":
         from cotracker.datasets.kubric_movif_dataset import KubricMovifDataset
 
         eval_dataset = KubricMovifDataset(
             data_root=os.path.join(
-                args.dataset_root, "kubric/kubric_movi_f_120_frames_dense/movi_f"
+                args.dataset_root, "kubric"
             ),
             traj_per_sample=1024,
             use_augs=False,
@@ -101,7 +101,9 @@ def get_train_dataset(args):
 
         kubric = kubric_movif_dataset.KubricMovifDataset(
             data_root=os.path.join(
-                args.dataset_root, "kubric/kubric_movi_f_120_frames_dense/movi_f"
+                args.dataset_root,
+                "TAP-Vid",
+                "kubric"
             ),
             crop_size=args.crop_size,
             seq_len=args.sequence_len,
@@ -115,9 +117,9 @@ def get_train_dataset(args):
         )
 
         if dataset is None:
-            dataset = ConcatDataset(4 * [kubric])
+            dataset = ConcatDataset([kubric])
         else:
-            dataset = ConcatDataset(4 * [kubric] + [dataset])
+            dataset = ConcatDataset([kubric] + [dataset])
         print("add kubric to train", len(dataset))
 
     if "dr" in args.train_datasets:
@@ -135,7 +137,7 @@ def get_train_dataset(args):
 
     return dataset
 
-
+@torch.no_grad
 def run_test_eval(evaluator, model, dataloaders, writer, step, query_random=False):
     model.eval()
     for ds_name, dataloader in dataloaders:

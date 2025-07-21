@@ -34,7 +34,7 @@ class DefaultConfig:
 
     # Path to the pre-trained model checkpoint to be used for the evaluation.
     # The default value is the path to a specific CoTracker model checkpoint.
-    checkpoint: str = "./checkpoints/scaled_online.pth"
+    checkpoint: str = "/users/gabrijel/projects/v-jepa-probing/co-tracker/checkpoints/baseline_online.pth"
     # EvaluationPredictor parameters
     # The size (N) of the support grid used in the predictor.
     # The total number of points is (N*N).
@@ -55,6 +55,7 @@ class DefaultConfig:
     local_extent: int = 50
 
     v2: bool = False
+    flash_attention: bool = False
 
     # Override hydra's working directory to current working dir,
     # also disable storing the .hydra logs:
@@ -91,8 +92,13 @@ def run_eval(cfg: DefaultConfig):
 
     evaluator = Evaluator(cfg.exp_dir)
     cotracker_model = build_cotracker(
-        cfg.checkpoint, offline=cfg.offline_model, window_len=cfg.window_len, v2=cfg.v2
+        cfg.checkpoint,
+        offline=cfg.offline_model,
+        window_len=cfg.window_len,
+        v2=cfg.v2,
+        flash_attention=cfg.flash_attention
     )
+    print(cotracker_model)
 
     # Creating the EvaluationPredictor object
     predictor = EvaluationPredictor(

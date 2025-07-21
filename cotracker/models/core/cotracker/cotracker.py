@@ -21,6 +21,7 @@ from cotracker.models.core.cotracker.blocks import (
     AttnBlock,
     CorrBlock,
     Attention,
+    FlashAttention
 )
 
 torch.manual_seed(0)
@@ -401,6 +402,7 @@ class EfficientUpdateFormer(nn.Module):
         num_virtual_tracks=64,
         add_space_attn=True,
         linear_layer_for_vis_conf=False,
+        flash_attention=False
     ):
         super().__init__()
         self.out_channels = 2
@@ -424,7 +426,7 @@ class EfficientUpdateFormer(nn.Module):
                     hidden_size,
                     num_heads,
                     mlp_ratio=mlp_ratio,
-                    attn_class=Attention,
+                    attn_class=Attention if not flash_attention else FlashAttention,
                 )
                 for _ in range(time_depth)
             ]
@@ -437,7 +439,7 @@ class EfficientUpdateFormer(nn.Module):
                         hidden_size,
                         num_heads,
                         mlp_ratio=mlp_ratio,
-                        attn_class=Attention,
+                        attn_class=Attention if not flash_attention else FlashAttention,
                     )
                     for _ in range(space_depth)
                 ]
@@ -445,7 +447,7 @@ class EfficientUpdateFormer(nn.Module):
             self.space_point2virtual_blocks = nn.ModuleList(
                 [
                     CrossAttnBlock(
-                        hidden_size, hidden_size, num_heads, mlp_ratio=mlp_ratio
+                        hidden_size, hidden_size, num_heads, mlp_ratio=mlp_ratio, flash_attention=flash_attention
                     )
                     for _ in range(space_depth)
                 ]
@@ -453,7 +455,7 @@ class EfficientUpdateFormer(nn.Module):
             self.space_virtual2point_blocks = nn.ModuleList(
                 [
                     CrossAttnBlock(
-                        hidden_size, hidden_size, num_heads, mlp_ratio=mlp_ratio
+                        hidden_size, hidden_size, num_heads, mlp_ratio=mlp_ratio, flash_attention=flash_attention
                     )
                     for _ in range(space_depth)
                 ]
@@ -533,19 +535,27 @@ class EfficientUpdateFormer(nn.Module):
 
 class CrossAttnBlock(nn.Module):
     def __init__(
-        self, hidden_size, context_dim, num_heads=1, mlp_ratio=4.0, **block_kwargs
+        self, hidden_size, context_dim, num_heads=1, mlp_ratio=4.0, flash_attention=False, **block_kwargs
     ):
         super().__init__()
         self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.norm_context = nn.LayerNorm(hidden_size)
-        self.cross_attn = Attention(
-            hidden_size,
-            context_dim=context_dim,
-            num_heads=num_heads,
-            qkv_bias=True,
-            **block_kwargs
-        )
-
+        if flash_attention:
+            self.cross_attn = FlashAttention(
+                hidden_size,
+                context_dim=context_dim,
+                num_heads=num_heads,
+                qkv_bias=True,
+                **block_kwargs                
+            )
+        else:
+            self.cross_attn = Attention(
+                hidden_size,
+                context_dim=context_dim,
+                num_heads=num_heads,
+                qkv_bias=True,
+                **block_kwargs
+            ) 
         self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
         approx_gelu = lambda: nn.GELU(approximate="tanh")

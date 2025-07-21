@@ -23,19 +23,18 @@ def build_cotracker(
         raise ValueError(f"Unknown model name {model_name}")
 
 
-def build_cotracker(checkpoint=None, offline=True, window_len=16, v2=False):
+def build_cotracker(checkpoint=None, offline=True, window_len=16, v2=False, flash_attention=False):
     if v2:
         cotracker = CoTracker2(stride=4, window_len=window_len)
     else:
         if offline:
             cotracker = CoTrackerThreeOffline(
-                stride=4, corr_radius=3, window_len=window_len
+                stride=4, corr_radius=3, window_len=window_len, flash_attention=flash_attention
             )
         else:
             cotracker = CoTrackerThreeOnline(
-                stride=4, corr_radius=3, window_len=window_len
+                stride=4, corr_radius=3, window_len=window_len, flash_attention=flash_attention
             )
-
     if checkpoint is not None:
         with open(checkpoint, "rb") as f:
             state_dict = torch.load(f, map_location="cpu")

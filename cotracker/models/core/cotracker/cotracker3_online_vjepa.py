@@ -4,14 +4,17 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
+from einops import rearrange
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from cotracker.models.core.model_utils import sample_features5d, bilinear_sampler
 from cotracker.models.core.embeddings import get_1d_sincos_pos_embed_from_grid
 
-from cotracker.models.core.cotracker.blocks import Mlp, BasicEncoder
+from cotracker.models.core.cotracker.blocks import Mlp
 from cotracker.models.core.cotracker.cotracker import EfficientUpdateFormer
+from cotracker.models.core.cotracker.vjepa import VJEPAFeatureExtractor
+from einops import rearrange
 
 torch.manual_seed(0)
 
@@ -50,7 +53,10 @@ class CoTrackerThreeBase(nn.Module):
         model_resolution=(384, 512),
         add_space_attn=True,
         linear_layer_for_vis_conf=True,
-        flash_attention=False
+        flash_attention=False,
+        vjepa="/scratch/shared/beegfs/gabrijel/hf/vjepa2-vitg-fpc64-384",
+        vjepa_channels=1408,
+        freeze_vjepa=True
     ):
         super(CoTrackerThreeBase, self).__init__()
         self.window_len = window_len
@@ -61,14 +67,23 @@ class CoTrackerThreeBase(nn.Module):
         self.latent_dim = 128
 
         self.linear_layer_for_vis_conf = linear_layer_for_vis_conf
-        self.fnet = BasicEncoder(input_dim=3, output_dim=self.latent_dim, stride=stride)
-
+        self.freeze_vjepa = freeze_vjepa
         highres_dim = 128
         lowres_dim = 256
 
         self.num_virtual_tracks = num_virtual_tracks
         self.model_resolution = model_resolution
+        [h, w] = self.model_resolution
+        self.vjepa = VJEPAFeatureExtractor(
+            vjepa,
+            height=h//stride,
+            width=w//stride
+        )
+        if freeze_vjepa:
+            for param in self.vjepa.parameters():
+                param.requires_grad = False
 
+        self.vjepa_projector = nn.Linear(vjepa_channels, self.latent_dim)
         self.input_dim = 1110
 
         self.updateformer = EfficientUpdateFormer(
@@ -92,7 +107,27 @@ class CoTrackerThreeBase(nn.Module):
         self.register_buffer(
             "time_emb", get_1d_sincos_pos_embed_from_grid(self.input_dim, time_grid[0])
         )
-
+    
+    def state_dict(self, destination=None, prefix='', keep_vars=False):
+        """Override to exclude backbone from checkpoint"""
+        state_dict = super(CoTrackerThreeBase, self).state_dict(destination, prefix, keep_vars) # type: ignore
+        
+        # Remove backbone parameters
+        if self.freeze_vjepa:
+            vjepa_keys = [k for k in state_dict.keys() if k.startswith(f'{prefix}vjepa.')]
+            for key in vjepa_keys:
+                del state_dict[key]
+            
+        return state_dict
+           
+    def get_video_feat(self, video):
+        with torch.inference_mode(self.freeze_vjepa):
+            f = self.vjepa(video)
+        f = f.clone()
+        f = self.vjepa_projector(f)
+        f = rearrange(f, "b t h w d -> (b t) d h w")
+        return f
+    
     def get_support_points(self, coords, r, reshape_back=True):
         B, _, N, _ = coords.shape
         device = coords.device
@@ -156,6 +191,14 @@ class CoTrackerThreeBase(nn.Module):
             time_emb.permute(0, 2, 1), size=t, mode="linear"
         ).permute(0, 2, 1)
         return time_emb.to(previous_dtype)
+    
+    def to(self, device):
+        super(CoTrackerThreeBase, self).to(device)
+        if self.freeze_vjepa:
+            self._vjepa = self._vjepa.to(device)
+        else:
+            self.vjepa = self.vjepa.to(device) 
+        return self
 
 
 class CoTrackerThreeOnline(CoTrackerThreeBase):
@@ -318,8 +361,7 @@ class CoTrackerThreeOnline(CoTrackerThreeBase):
             assert not is_train, "Training not supported in online mode."
 
         step = S // 2  # How much the sliding window moves at every step
-
-        video = 2 * (video / 255.0) - 1.0
+        # print(video.min(), video.max()) # [0, 255]
         pad = (
             S - T if is_online else (S - T % S) % S
         )  # We don't want to pad if T % S == 0
@@ -376,13 +418,13 @@ class CoTrackerThreeOnline(CoTrackerThreeBase):
             fmaps = []
             for t in range(0, T, fmaps_chunk_size):
                 video_chunk = video[:, t : t + fmaps_chunk_size]
-                fmaps_chunk = self.fnet(video_chunk.reshape(-1, C_, H, W))
+                fmaps_chunk = self.get_video_feat(video_chunk)
                 T_chunk = video_chunk.shape[1]
                 C_chunk, H_chunk, W_chunk = fmaps_chunk.shape[1:]
                 fmaps.append(fmaps_chunk.reshape(B, T_chunk, C_chunk, H_chunk, W_chunk))
             fmaps = torch.cat(fmaps, dim=1).reshape(-1, C_chunk, H_chunk, W_chunk)
         else:
-            fmaps = self.fnet(video.reshape(-1, C_, H, W))
+            fmaps = self.get_video_feat(video)
 
         # print(fmaps.shape)
         fmaps = fmaps.permute(0, 2, 3, 1)
