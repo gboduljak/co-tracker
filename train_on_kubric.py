@@ -25,6 +25,7 @@ from pytorch_lightning.lite import LightningLite
 from cotracker.models.core.cotracker.cotracker3_offline import CoTrackerThreeOffline
 from cotracker.models.core.cotracker.cotracker3_online import CoTrackerThreeOnline
 from cotracker.models.core.cotracker.cotracker3_online_vjepa import CoTrackerThreeOnline as CoTrackerThreeOnlineVJEPA
+from cotracker.models.core.cotracker.cotracker3_online_vjepa_dpt import CoTrackerThreeOnline as CoTrackerThreeOnlineVJEPADPT
 
 from cotracker.utils.visualizer import Visualizer
 from cotracker.models.core.model_utils import get_uniformly_sampled_pts
@@ -308,6 +309,17 @@ class Lite(LightningLite):
                 )
         elif args.model_name == "cotracker_three_vjepa":
             model = CoTrackerThreeOnlineVJEPA(
+                stride=args.model_stride,
+                corr_radius=args.corr_radius,
+                corr_levels=args.corr_levels,
+                window_len=args.sliding_window_len,
+                num_virtual_tracks=args.num_virtual_tracks,
+                model_resolution=args.crop_size,
+                linear_layer_for_vis_conf=args.linear_layer_for_vis_conf,
+                flash_attention=True
+            )
+        elif args.model_name == "cotracker_three_vjepa_dpt":
+            model = CoTrackerThreeOnlineVJEPADPT(
                 stride=args.model_stride,
                 corr_radius=args.corr_radius,
                 corr_levels=args.corr_levels,

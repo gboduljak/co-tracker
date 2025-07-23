@@ -7,6 +7,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.checkpoint as checkpoint
 
 from cotracker.models.core.model_utils import sample_features4d, sample_features5d
 from cotracker.models.core.embeddings import (
@@ -402,13 +403,16 @@ class EfficientUpdateFormer(nn.Module):
         num_virtual_tracks=64,
         add_space_attn=True,
         linear_layer_for_vis_conf=False,
-        flash_attention=False
+        flash_attention=False,
+        ckpt_every_other=False
     ):
         super().__init__()
         self.out_channels = 2
         self.num_heads = num_heads
         self.hidden_size = hidden_size
         self.input_transform = torch.nn.Linear(input_dim, hidden_size, bias=True)
+        self.ckpt_every_other = ckpt_every_other
+        
         if linear_layer_for_vis_conf:
             self.flow_head = torch.nn.Linear(hidden_size, output_dim - 2, bias=True)
             self.vis_conf_head = torch.nn.Linear(hidden_size, 2, bias=True)
@@ -494,7 +498,10 @@ class EfficientUpdateFormer(nn.Module):
         layers = []
         for i in range(len(self.time_blocks)):
             time_tokens = tokens.contiguous().view(B * N, T, -1)  # B N T C -> (B N) T C
-            time_tokens = self.time_blocks[i](time_tokens)
+            if self.ckpt_every_other and i % 2 == 0:
+                time_tokens = checkpoint.checkpoint(self.time_blocks[i], time_tokens, use_reentrant=False)
+            else:
+                time_tokens = self.time_blocks[i](time_tokens)
 
             tokens = time_tokens.view(B, N, T, -1)  # (B N) T C -> B N T C
             if (
