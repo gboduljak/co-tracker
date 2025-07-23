@@ -23,9 +23,17 @@ def build_cotracker(
         raise ValueError(f"Unknown model name {model_name}")
 
 
-def build_cotracker(checkpoint=None, offline=True, window_len=16, v2=False, flash_attention=False):
+def build_cotracker(checkpoint=None, offline=True, window_len=16, v2=False, flash_attention=False, vjepa=False):
     if v2:
         cotracker = CoTracker2(stride=4, window_len=window_len)
+    elif vjepa:
+        from cotracker.models.core.cotracker.cotracker3_online_vjepa import CoTrackerThreeOnline as CoTrackerThreeOnlineVJEPA
+        cotracker = CoTrackerThreeOnlineVJEPA(
+            stride=4,
+            corr_radius=3,
+            window_len=window_len,
+            flash_attention=True
+        )
     else:
         if offline:
             cotracker = CoTrackerThreeOffline(
@@ -40,5 +48,5 @@ def build_cotracker(checkpoint=None, offline=True, window_len=16, v2=False, flas
             state_dict = torch.load(f, map_location="cpu")
             if "model" in state_dict:
                 state_dict = state_dict["model"]
-        cotracker.load_state_dict(state_dict)
+        cotracker.load_state_dict(state_dict, strict=False)
     return cotracker

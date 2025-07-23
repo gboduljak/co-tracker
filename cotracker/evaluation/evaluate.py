@@ -56,6 +56,7 @@ class DefaultConfig:
 
     v2: bool = False
     flash_attention: bool = False
+    vjepa: bool = False
 
     # Override hydra's working directory to current working dir,
     # also disable storing the .hydra logs:
@@ -96,7 +97,8 @@ def run_eval(cfg: DefaultConfig):
         offline=cfg.offline_model,
         window_len=cfg.window_len,
         v2=cfg.v2,
-        flash_attention=cfg.flash_attention
+        flash_attention=cfg.flash_attention,
+        vjepa=cfg.vjepa
     )
     print(cotracker_model)
 
