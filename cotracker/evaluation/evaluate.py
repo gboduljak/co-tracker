@@ -57,6 +57,8 @@ class DefaultConfig:
     v2: bool = False
     flash_attention: bool = False
     vjepa: bool = False
+    dpt: bool = False
+    online: bool = True
 
     # Override hydra's working directory to current working dir,
     # also disable storing the .hydra logs:
@@ -98,10 +100,10 @@ def run_eval(cfg: DefaultConfig):
         window_len=cfg.window_len,
         v2=cfg.v2,
         flash_attention=cfg.flash_attention,
-        vjepa=cfg.vjepa
+        vjepa=cfg.vjepa,
+        dpt=cfg.dpt
     )
-    print(cotracker_model)
-
+    print(cfg)
     # Creating the EvaluationPredictor object
     predictor = EvaluationPredictor(
         cotracker_model,
@@ -147,6 +149,13 @@ def run_eval(cfg: DefaultConfig):
             queried_first=not "strided" in cfg.dataset_name,
             # resize_to=None,
         )
+    elif "perception_test" in  cfg.dataset_name:
+        from cotracker.datasets.perception_test_dataset import PerceptionTest
+        test_dataset = PerceptionTest(
+            dataset_root="/scratch/shared/beegfs/gabrijel/benchmarks/PerceptionTest/point_tracking",
+            split="valid",
+            queried_first=not "strided" in cfg.dataset_name,
+        )
     elif cfg.dataset_name == "dynamic_replica":
         from cotracker.datasets.dr_dataset import DynamicReplicaDataset
 
@@ -168,7 +177,10 @@ def run_eval(cfg: DefaultConfig):
 
     start = time.time()
     evaluate_result = evaluator.evaluate_sequence(
-        predictor, test_dataloader, dataset_name=cfg.dataset_name
+        predictor,
+        test_dataloader,
+        dataset_name=cfg.dataset_name,
+        online=cfg.online
     )
     end = time.time()
     print(end - start)

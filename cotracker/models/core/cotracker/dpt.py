@@ -9,7 +9,7 @@
 
 
 import os
-from typing import List, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -51,6 +51,7 @@ class DPTHead(nn.Module):
         pos_embed: bool = True,
         feature_only: bool = False,
         down_ratio: int = 1,
+        out_size: Optional[Tuple[int, int]] = None
     ) -> None:
         super(DPTHead, self).__init__()
         self.patch_size = patch_size
@@ -60,8 +61,8 @@ class DPTHead(nn.Module):
         self.feature_only = feature_only
         self.down_ratio = down_ratio
         self.intermediate_layer_idx = intermediate_layer_idx
-
         self.norm = nn.LayerNorm(dim_in)
+        self.out_size = out_size
 
         # Projection layers for each output channel from tokens.
         self.projects = nn.ModuleList(
@@ -224,9 +225,17 @@ class DPTHead(nn.Module):
         # Fuse features from multiple layers.
         out = self.scratch_forward(out)
         # Interpolate fused output to match target image resolution.
+        if self.out_size is None:
+            (out_h, out_w) = (
+                int(patch_h * self.patch_size / self.down_ratio),
+                int(patch_w * self.patch_size / self.down_ratio)
+            )
+        else:
+            (out_h, out_w) = self.out_size
+            
         out = custom_interpolate(
             out,
-            (int(patch_h * self.patch_size / self.down_ratio), int(patch_w * self.patch_size / self.down_ratio)),
+            (out_h, out_w),
             mode="bilinear",
             align_corners=True,
         )

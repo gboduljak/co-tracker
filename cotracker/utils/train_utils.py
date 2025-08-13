@@ -114,6 +114,8 @@ def get_train_dataset(args):
             random_seq_len=args.random_seq_len,
             random_frame_rate=args.random_frame_rate,
             random_number_traj=args.random_number_traj,
+            # sample_within_margin=args.sample_within_margin,
+            # sample_within_margin_margin=1.75
         )
 
         if dataset is None:

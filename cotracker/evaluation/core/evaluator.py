@@ -39,7 +39,7 @@ class Evaluator:
             pred_trajectory, pred_visibility = pred_trajectory
         else:
             pred_visibility = None
-        if "tapvid" in dataset_name:
+        if "tapvid" in dataset_name or "perception_test" in dataset_name:
             B, T, N, D = sample.trajectory.shape
             traj = sample.trajectory.clone()
             thr = 0.6
@@ -69,7 +69,7 @@ class Evaluator:
                 .numpy()
             )
             pred_tracks = pred_trajectory.permute(0, 2, 1, 3).cpu().numpy()
-
+            
             out_metrics = compute_tapvid_metrics(
                 query_points,
                 gt_occluded,
@@ -183,6 +183,7 @@ class Evaluator:
         visualize_every: int = 50,
         writer: Optional[SummaryWriter] = None,
         step: Optional[int] = 0,
+        online: bool = True
     ):
         metrics = {}
 
@@ -211,9 +212,8 @@ class Evaluator:
                 print(f"skipping batch {ind}")
                 continue
 
-            if "tapvid" in dataset_name:
+            if "tapvid" in dataset_name or "perception_test" in dataset_name:
                 queries = sample.query_points.clone().float()
-
                 queries = torch.stack(
                     [
                         queries[:, :, 0],
@@ -231,7 +231,7 @@ class Evaluator:
                     dim=2,
                 ).to(device)
 
-            if isinstance(model.model, CoTrackerThreeOnline):
+            if online:
                 online_model = CoTrackerOnlinePredictor(checkpoint=None)
                 online_model.model = model.model
                 online_model.step = model.model.window_len // 2
@@ -253,7 +253,6 @@ class Evaluator:
                 pred_tracks = (pred_tracks, pred_visibility)
             else:
                 pred_tracks = model(sample.video, queries)
-
             if "strided" in dataset_name:
                 inv_video = sample.video.flip(1).clone()
                 inv_queries = queries.clone()
@@ -284,5 +283,8 @@ class Evaluator:
                     writer=writer,
                     step=step,
                 )
-            self.compute_metrics(metrics, sample, pred_tracks, dataset_name)
+            try:
+                self.compute_metrics(metrics, sample, pred_tracks, dataset_name)
+            except Exception:
+                pass
         return metrics

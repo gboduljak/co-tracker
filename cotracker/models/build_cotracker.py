@@ -23,30 +23,40 @@ def build_cotracker(
         raise ValueError(f"Unknown model name {model_name}")
 
 
-def build_cotracker(checkpoint=None, offline=True, window_len=16, v2=False, flash_attention=False, vjepa=False):
+def build_cotracker(checkpoint=None, offline=True, window_len=16, v2=False, flash_attention=False, vjepa=False, dpt=False):
     if v2:
         cotracker = CoTracker2(stride=4, window_len=window_len)
-    elif vjepa:
-        from cotracker.models.core.cotracker.cotracker3_online_vjepa import CoTrackerThreeOnline as CoTrackerThreeOnlineVJEPA
-        cotracker = CoTrackerThreeOnlineVJEPA(
-            stride=4,
-            corr_radius=3,
-            window_len=window_len,
-            flash_attention=True
-        )
-    else:
-        if offline:
-            cotracker = CoTrackerThreeOffline(
-                stride=4, corr_radius=3, window_len=window_len, flash_attention=flash_attention
+    if vjepa:
+        if dpt:
+            from cotracker.models.core.cotracker.cotracker3_online_vjepa_dpt import CoTrackerThreeOnline as CoTrackerThreeOnlineVJEPADPT
+            cotracker = CoTrackerThreeOnlineVJEPADPT(
+                stride=4,
+                corr_radius=3,
+                window_len=window_len,
+                flash_attention=True
             )
         else:
-            cotracker = CoTrackerThreeOnline(
-                stride=4, corr_radius=3, window_len=window_len, flash_attention=flash_attention
+            from cotracker.models.core.cotracker.cotracker3_online_vjepa import CoTrackerThreeOnline as CoTrackerThreeOnlineVJEPA
+            cotracker = CoTrackerThreeOnlineVJEPA(
+                stride=4,
+                corr_radius=3,
+                window_len=window_len,
+                flash_attention=True
             )
+    else:
+        if not v2:
+            if offline:
+                cotracker = CoTrackerThreeOffline(
+                    stride=4, corr_radius=3, window_len=window_len, flash_attention=flash_attention
+                )
+            else:
+                cotracker = CoTrackerThreeOnline(
+                    stride=4, corr_radius=3, window_len=window_len, flash_attention=flash_attention
+                )
     if checkpoint is not None:
         with open(checkpoint, "rb") as f:
             state_dict = torch.load(f, map_location="cpu")
             if "model" in state_dict:
                 state_dict = state_dict["model"]
-        cotracker.load_state_dict(state_dict, strict=False)
+        cotracker.load_state_dict(state_dict)
     return cotracker

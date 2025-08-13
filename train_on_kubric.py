@@ -26,6 +26,7 @@ from cotracker.models.core.cotracker.cotracker3_offline import CoTrackerThreeOff
 from cotracker.models.core.cotracker.cotracker3_online import CoTrackerThreeOnline
 from cotracker.models.core.cotracker.cotracker3_online_vjepa import CoTrackerThreeOnline as CoTrackerThreeOnlineVJEPA
 from cotracker.models.core.cotracker.cotracker3_online_vjepa_dpt import CoTrackerThreeOnline as CoTrackerThreeOnlineVJEPADPT
+from cotracker.models.core.cotracker.cotracker3_online_dino import CoTrackerThreeOnline as CoTrackerThreeOnlineDINO
 
 from cotracker.utils.visualizer import Visualizer
 from cotracker.models.core.model_utils import get_uniformly_sampled_pts
@@ -65,7 +66,10 @@ def fetch_optimizer(args, model):
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Total number of parameters: {total_params}")
     optimizer = optim.AdamW(
-        model.parameters(), lr=args.lr, weight_decay=args.wdecay, eps=1e-8
+        model.parameters(),
+        lr=args.lr,
+        weight_decay=args.wdecay,
+        eps=1e-8
     )
     scheduler = optim.lr_scheduler.OneCycleLR(
         optimizer,
@@ -75,6 +79,8 @@ def fetch_optimizer(args, model):
         cycle_momentum=False,
         anneal_strategy="cos",
     )
+    # scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda _: 1.0)
+
     return optimizer, scheduler
 
 
@@ -329,6 +335,35 @@ class Lite(LightningLite):
                 linear_layer_for_vis_conf=args.linear_layer_for_vis_conf,
                 flash_attention=True
             )
+        elif args.model_name == "cotracker_three_dino":
+            if args.upsampling_type == "dpt":
+              model = CoTrackerThreeOnlineDINO(
+                  stride=args.model_stride,
+                  corr_radius=args.corr_radius,
+                  corr_levels=args.corr_levels,
+                  window_len=args.sliding_window_len,
+                  num_virtual_tracks=args.num_virtual_tracks,
+                  model_resolution=args.crop_size,
+                  linear_layer_for_vis_conf=args.linear_layer_for_vis_conf,
+                  flash_attention=True,
+                  refine_dino=args.refine_features,
+                  dino_intermediate_features_idx=[4, 11, 17, 23],
+                  upsampling_type="dpt",
+                  gradient_checkpointing=args.gradient_checkpointing
+              )
+            else:
+              model = CoTrackerThreeOnlineDINO(
+                  stride=args.model_stride,
+                  corr_radius=args.corr_radius,
+                  corr_levels=args.corr_levels,
+                  window_len=args.sliding_window_len,
+                  num_virtual_tracks=args.num_virtual_tracks,
+                  model_resolution=args.crop_size,
+                  linear_layer_for_vis_conf=args.linear_layer_for_vis_conf,
+                  flash_attention=True,
+                  refine_dino=False,
+                  upsampling_type="bilinear",
+              )                
         else:
             raise ValueError(f"Model {args.model_name} doesn't exist")
 
@@ -734,7 +769,32 @@ if __name__ == "__main__":
         action="store_true",
         help="stride of the CoTracker feature network",
     )
-
+    parser.add_argument(
+        "--sample_within_margin",
+        action="store_true",
+        help="only sample trajectories within the margin",
+    )
+    parser.add_argument(
+        "--sample_within_margin_margin",
+        type=float,
+        default=1.75,
+        help="maximum margin to sample from",
+    )
+    parser.add_argument(
+        "--upsampling_type",
+        type=str,
+        choices=["bilinear", "dpt"],
+        default=["bilinear"],
+        help="feature upsampling type",
+    )
+    parser.add_argument(
+        "--gradient_checkpointing",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--refine_features",
+        action="store_true",
+    )
     args = parser.parse_args()
     logging.basicConfig(
         level=logging.INFO,

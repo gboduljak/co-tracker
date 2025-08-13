@@ -8,13 +8,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from functools import partial
-from typing import Callable
+from typing import Callable, List
 import collections
 from torch import Tensor
 from itertools import repeat
+import torch.utils.checkpoint as checkpoint
 
 from cotracker.models.core.model_utils import bilinear_sampler
-
+from einops import rearrange
 
 # From PyTorch internals
 def _ntuple(n):
@@ -474,4 +475,117 @@ class AttnBlock(nn.Module):
             attn_bias = (~mask) * max_neg_value
         x = x + self.attn(self.norm1(x), attn_bias=attn_bias)
         x = x + self.mlp(self.norm2(x))
+        return x
+
+
+class SpatioTemporalTransformer(nn.Module):
+    def __init__(
+        self,
+        hidden_size: int = 128,
+        space_depth: int = 3,
+        time_depth: int = 3,
+        num_heads: int = 8,
+        mlp_ratio: int = 4,
+        flash_attention: bool = True,
+        temporal_posenc: bool = True,
+        window_length: int = 16,
+    ):
+        super(SpatioTemporalTransformer, self).__init__()
+        self.window_length = window_length
+        if temporal_posenc:
+            self.temporal_posenc = nn.Parameter(
+                torch.randn((window_length, )) * 0.02
+            )
+        self.space_blocks = nn.ModuleList(
+            [
+                AttnBlock(
+                    hidden_size,
+                    num_heads,
+                    mlp_ratio=mlp_ratio,
+                    dim_head=hidden_size // num_heads,
+                    attn_class=Attention if not flash_attention else FlashAttention,
+                )
+                for _ in range(space_depth)
+            ]
+        )
+        self.time_blocks = nn.ModuleList(
+            [
+                AttnBlock(
+                    hidden_size,
+                    num_heads,
+                    mlp_ratio=mlp_ratio,
+                    dim_head=hidden_size // num_heads,
+                    attn_class=Attention if not flash_attention else FlashAttention,
+                )
+                for _ in range(time_depth)
+            ]
+        )
+    
+    def forward(self, x: torch.Tensor):
+        # x: (b, t, n, d)
+        b, t, n, d = x.shape
+        s = self.window_length
+        
+        windows: List[torch.Tensor] = []
+        for ind in range(0, t - s // 2, s // 2):
+            window = x[:, ind : ind + s, ...]
+            _, t, *_ = window.shape
+            if t < s:
+                # Repeat last frame to pad
+                last_frame = window[:, -1:, ...]  # (b, 1, n, d)
+                pad_len = s - t
+                pad_frames = last_frame.repeat(1, pad_len, 1, 1)
+                window = torch.cat([window, pad_frames], dim=1)
+            windows.append(window)
+        
+
+
+    def forward_window(self, x: torch.Tensor):
+        # x: (b, t, n, d)
+        b, t, n, d = x.shape
+        if hasattr(self, "temporal_posenc"):
+            x += rearrange(
+                self.temporal_posenc,
+                "t -> () t () ()"
+            )
+        x = rearrange(
+            x,
+            "b t n d -> (b t) n d"
+        )
+        for (idx, time_attn, space_attn) in zip(
+            range(len(self.time_blocks)),
+            self.time_blocks,
+            self.space_blocks
+        ):
+            x = rearrange(
+                x,
+                "(b t) n d -> (b n) t d",
+                b=b
+            )
+            if idx % 2 == 0:
+                x = checkpoint.checkpoint(
+                    time_attn,
+                    x,
+                    use_reentrant=False
+                ) # type: ignore
+            else:
+                x = time_attn(x)
+            # x = time_attn(x)
+            x = rearrange(
+                x,
+                "(b n) t d -> (b t) n d",
+                b=b,
+                t=t
+            )
+            x = space_attn(x)
+            # x = checkpoint.checkpoint(
+            #     space_attn,
+            #     x,
+            #     use_reentrant=False
+            # ) # type: ignore
+        x = rearrange(
+            x,
+            "(b t) n d -> b t n d",
+            b=b
+        )
         return x
