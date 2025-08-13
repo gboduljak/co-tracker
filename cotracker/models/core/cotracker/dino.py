@@ -59,7 +59,6 @@ class DINOFeatureExtractor(nn.Module):
           self.dpt = DPTHead(
               dim_in=dino_dim,
               patch_size=dino_patch_size,
-              features=feature_dim,
               output_dim=feature_dim,
               feature_only=True,
               down_ratio=down_ratio,
