@@ -156,6 +156,8 @@ def activate_head(out, activation="norm_exp", conf_activation="expp1"):
         conf_out = conf.exp()
     elif conf_activation == "sigmoid":
         conf_out = torch.sigmoid(conf)
+    elif conf_activation == "linear":
+        conf_out = conf
     else:
         raise ValueError(f"Unknown conf_activation: {conf_activation}")
 
