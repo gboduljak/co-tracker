@@ -59,8 +59,7 @@ class DINOFeatureExtractor(nn.Module):
           self.dpt = DPTHead(
               dim_in=dino_dim,
               patch_size=dino_patch_size,
-              output_dim=feature_dim,
-              feature_only=True,
+              output_dim=feature_dim + 1,
               down_ratio=down_ratio,
               out_size=(
                  input_height // down_ratio,
@@ -68,7 +67,8 @@ class DINOFeatureExtractor(nn.Module):
               ),
               pos_embed=False,
               intermediate_layer_idx=list(range(len(dino_intermediate_features_idx))),
-              activation="linear"
+              activation="linear",
+              conf_activation="linear"
           )
         self.refine_dino = refine_dino
 
@@ -156,7 +156,7 @@ class DINOFeatureExtractor(nn.Module):
           )
           x = self.proj(x)
         else:
-          x = self.dpt(
+          x, _ = self.dpt(
               aggregated_tokens_list=xs,
               images=rearrange(
                 processed_video["pixel_values"],
@@ -164,5 +164,9 @@ class DINOFeatureExtractor(nn.Module):
                 b=b
               ),
               patch_start_idx=1 # index 0 is CLS token
+          )
+          x = rearrange(
+            x,
+            "b t h w c -> b t c h w"
           )
         return x
